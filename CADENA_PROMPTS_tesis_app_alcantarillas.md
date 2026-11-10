@@ -8,7 +8,7 @@
 
 ## 0. ¿Es posible con el contenido del repo `Normas`?
 
-**Sí, para casi todo.** El repo `Andy-rba30/Normas` trae 18 PDF: manual MTC de Hidrología, Hidráulica y Drenaje; DG-2018; EG-2013; Manual de Puentes; Suelos y Pavimentos; E.030 (2026); E.050; E.060; AASHTO LRFD 9.ª; AASHTO M 36, M 170M, M 294 (traducción no oficial); ASTM A760, A796; HDS-5 (dos copias: `fhwa_culvert_hydraulics_hds5si.pdf` y `hif12026.pdf`, que **no es HEC-14** aunque su nombre lo sugiera); Seguridad Vial y Dispositivos de Control (no se usan).
+**Sí, para casi todo.** El repo `Andy-rba30/Normas` trae 20 PDF: manual MTC de Hidrología, Hidráulica y Drenaje; DG-2018; EG-2013; Manual de Puentes; Suelos y Pavimentos; E.030 (2026); E.050; E.060; AASHTO LRFD 9.ª; AASHTO M 36, M 170M, M 294 (traducción no oficial); ASTM A760, A796; HDS-5 (dos copias: `fhwa_culvert_hydraulics_hds5si.pdf` y `hif12026.pdf`, que **no es HEC-14** aunque su nombre lo sugiera); Seguridad Vial y Dispositivos de Control (no se usan); y, desde el commit `eebfcca`, HEC-14 (`hec14.pdf`) y el WSDOT Hydraulics Manual (`HydraulicsManual.pdf`).
 
 Con eso se cubre: hidrología completa (MTC cap. III: Tabla 01–02 TR, §3.8.1 IDF, §3.9 Tabla 05 Tc, §3.12.2 Tabla 08 racional), hidráulica (HDS-5 Tablas A.1 y C.2, §3.3, §3.5, §5.4.3; MTC 4.1.1.3), geometría (DG-2018, EG-2013 508), estructural del conducto (AASHTO LRFD 3.6.1.2.6, 12.6, 12.7, 12.10, 12.11, 12.12; M 170M; A796; M 294), cabezales y aleros (AASHTO 3.11.5.3, 3.11.6.4, 11.6; Manual de Puentes 2.4; E.050 Art. 21 y 39.13; E.060 cap. 7, 11, 14, 22; E.030 Anexo 1), espaciamiento (MTC 4.1.2.1) y protección básica (MTC ec. 49 Laushey y Lámina 05).
 
