@@ -39,6 +39,11 @@ CARPETA = "D:/Modelado via/COTAS_DRON"                 # carpeta de resultados
 PUNTOS_CSV = "D:/Modelado via/APP/puntos_via_evitamiento.csv"
 PERFIL_CSV = ""      # opcional: perfil del diseño exportado de Civil 3D
 #                      (columnas: progresiva, cota_rasante, cota_subrasante)
+PERFIL_PROGRESIVA_EN = "m"  # unidad de la progresiva del perfil cuando no lleva '+':
+#                             "m" (Civil 3D) o "km". En puntos_via_evitamiento.csv
+#                             la app la lee en km ('0.380' = '0+380'), y aquí igual.
+PROG_INICIO_EJE = 0.0   # progresiva (m) del primer vértice del eje; 0 si empieza en 0+000
+EJE_INVERTIDO = False   # True si el eje está digitalizado del final al inicio
 
 # Texto que aparece en el nombre o en la ruta de cada capa cargada
 MDT_FUENTE = ("MDT", "DTM", "dron")
@@ -94,12 +99,22 @@ class Polilinea:
         return mejor
 
 
-def leer_progresiva(texto):
-    texto = str(texto).strip()
-    if "+" in texto:
-        km, m = texto.split("+")
-        return float(km) * 1000 + float(m)
-    return float(texto)
+def leer_progresiva(texto, sin_mas="km"):
+    """Progresiva en metros. '0+380' -> 380; sin '+', el número se toma en `sin_mas`
+    ('km' como lo hace la app: '0.380' -> 380; o 'm'). Admite coma decimal y 'km'."""
+    t = str(texto).strip().lower().replace("km", "").replace(" ", "")
+    if not t:
+        raise ValueError("progresiva vacía")
+    if "+" in t:
+        km, m = t.split("+", 1)
+        return float(km.replace(",", ".")) * 1000 + float(m.replace(",", "."))
+    v = float(t.replace(",", "."))
+    return v * 1000 if sin_mas == "km" else v
+
+
+def formato_progresiva(metros):
+    km, m = divmod(float(metros), 1000.0)
+    return "%d+%06.2f" % (km, m)
 
 
 # ============================== MDT por ventanas ================================
@@ -113,18 +128,26 @@ class MDT:
     def __init__(self, leer):
         self._leer = leer
         self._cache = None
+        self._pedido = None     # extensión pedida al cargar, aunque el ráster la recorte
 
     def ventana(self, x, y, radio):
         c = self._cache
-        if c is not None:
-            arr, x0, y0, dx, dy, nd = c
-            if (x - radio >= x0 and x + radio <= x0 + arr.shape[1] * dx
-                    and y + radio <= y0 and y - radio >= y0 - arr.shape[0] * dy):
-                return c
+        if c is None:
+            return None
+        arr, x0, y0, dx, dy, nd = c
+
+        def cubre(xmin, ymin, xmax, ymax):
+            return x - radio >= xmin and x + radio <= xmax and y - radio >= ymin and y + radio <= ymax
+
+        if cubre(x0, y0 - arr.shape[0] * dy, x0 + arr.shape[1] * dx, y0):
+            return c
+        if self._pedido is not None and cubre(*self._pedido):
+            return c            # la ventana se recortó en el borde del ráster: fuera no hay datos
         return None
 
     def cargar(self, xmin, ymin, xmax, ymax):
         self._cache = self._leer(xmin, ymin, xmax, ymax)
+        self._pedido = (xmin, ymin, xmax, ymax)
 
     def _celdas(self, x, y, radio):
         c = self.ventana(x, y, radio + 1.0)
@@ -187,14 +210,24 @@ def perfil_a_lo_largo(mdt, puntos_y_dist):
 
 
 def medir_obra(obra, eje, mdt, cauces, canales, perfil):
-    prog = leer_progresiva(obra["progresiva_km"])
-    familia = obra["familia"].strip().upper()
-    P, t = eje.punto(prog)
+    prog = leer_progresiva(obra["progresiva_km"], "km")
+    familia = (obra.get("familia") or "").strip().upper()
+    alertas = []
+    if familia not in ("A", "B", "C"):
+        alertas.append("familia '%s' desconocida (la app admite A, B o C): se mide como cauce" % familia)
+    s_eje = prog - PROG_INICIO_EJE
+    if EJE_INVERTIDO:
+        s_eje = eje.largo - s_eje
+    if s_eje < -0.5 or s_eje > eje.largo + 0.5:
+        alertas.append("la progresiva queda fuera del eje (%s a %s): se midió en el extremo más cercano; "
+                       "revisa PROG_INICIO_EJE / EJE_INVERTIDO o la progresiva"
+                       % (formato_progresiva(PROG_INICIO_EJE), formato_progresiva(PROG_INICIO_EJE + eje.largo)))
+    P, t = eje.punto(s_eje)
     n = np.array([-t[1], t[0]])                     # perpendicular al eje
     r = {"id": obra["id"], "progresiva": obra["progresiva_km"], "familia": familia,
-         "x": round(float(P[0]), 3), "y": round(float(P[1]), 3), "alertas": []}
-    alertas = r["alertas"]
+         "x": round(float(P[0]), 3), "y": round(float(P[1]), 3), "alertas": alertas}
     lineas_control = []
+    tipo = "canal" if familia == "C" else "cauce"
 
     # 1. dirección del cauce o del canal en el cruce
     fuente = canales if familia == "C" else cauces
@@ -203,20 +236,24 @@ def medir_obra(obra, eje, mdt, cauces, canales, perfil):
         nombre, pl, sep, s0 = cerca
         pasos = np.arange(-L_CAUCE, L_CAUCE + PASO / 2, PASO)
         pts = [(d, tuple(pl.punto(s0 + d)[0])) for d in pasos if 0 <= s0 + d <= pl.largo]
-        r["direccion"] = ("canal" if familia == "C" else "cauce") + " '%s' a %.1f m del cruce" % (nombre, sep)
+        r["direccion"] = tipo + " '%s' a %.1f m del cruce" % (nombre, sep)
         a, b = pl.punto(max(s0 - 10, 0))[0], pl.punto(min(s0 + 10, pl.largo))[0]
         u = (b - a) / (np.hypot(*(b - a)) or 1.0)
         if sep > 10:
-            alertas.append("el %s pasa a %.0f m de la progresiva: revisar la ubicación de la obra"
-                           % ("canal" if familia == "C" else "cauce", sep))
+            alertas.append("el %s pasa a %.0f m de la progresiva: revisar la ubicación de la obra" % (tipo, sep))
     else:
         u = n.copy()
         pasos = np.arange(-L_CAUCE, L_CAUCE + PASO / 2, PASO)
         pts = [(d, tuple(P + d * u)) for d in pasos]
-        r["direccion"] = "perpendicular al eje (sin %s a menos de %.0f m)" % (
-            "canal" if familia == "C" else "cauce", BUSCAR_CAUCE)
-        if familia == "C":
-            alertas.append("falta la capa de canales: esviaje y corona no se pueden medir")
+        if not fuente:
+            r["direccion"] = "perpendicular al eje (sin capa de %ss)" % tipo
+            if familia == "C":
+                alertas.append("falta la capa de canales: esviaje y corona no se pueden medir")
+        else:
+            r["direccion"] = "perpendicular al eje (sin %s a menos de %.0f m)" % (tipo, BUSCAR_CAUCE)
+            if familia == "C":
+                alertas.append("ningún canal a menos de %.0f m del cruce: esviaje y corona no se pueden medir"
+                               % BUSCAR_CAUCE)
     lineas_control.append([p for _, p in pts])
 
     # 2. pendiente por ajuste lineal; el lado bajo es aguas abajo
@@ -231,12 +268,15 @@ def medir_obra(obra, eje, mdt, cauces, canales, perfil):
             alertas.append("pendiente casi nula (%.3f %%): el agua no tiene hacia dónde correr" % (100 * S))
     else:
         r["S_cauce"] = None
-        alertas.append("el MDT no cubre la línea del cauce")
+        alertas.append("el MDT no cubre la línea del %s" % tipo if len(pts) >= 5
+                       else "el %s digitalizado es muy corto para medir su pendiente" % tipo)
 
     # 3. esviaje: ángulo entre la línea del conducto y la perpendicular al eje
     cosang = abs(float(u @ n))
     r["esviaje_grados"] = round(math.degrees(math.acos(min(cosang, 1.0))), 1)
-    if r["esviaje_grados"] > 45:
+    if r["esviaje_grados"] >= 89.5:
+        alertas.append("el %s va paralelo al eje: no hay cruce (la app exige esviaje < 90°)" % tipo)
+    elif r["esviaje_grados"] > 45:
         alertas.append("esviaje de %.0f°: revisar en planta" % r["esviaje_grados"])
 
     # 4. cotas en el eje y en la entrega
@@ -255,15 +295,16 @@ def medir_obra(obra, eje, mdt, cauces, canales, perfil):
 
     # 5. canales: corona más baja de los dos bordos y fondo
     if familia == "C" and cerca is not None:
+        C = pl.punto(s0)[0]                          # punto del canal más cercano al cruce
         m = np.array([-u[1], u[0]])                  # perpendicular al canal
-        izq = [mdt.maximo(*(P + d * m), 0.0) for d in np.arange(0.5, ANCHO_CANAL, 0.25)]
-        der = [mdt.maximo(*(P - d * m), 0.0) for d in np.arange(0.5, ANCHO_CANAL, 0.25)]
+        izq = [mdt.maximo(*(C + d * m), 0.0) for d in np.arange(0.5, ANCHO_CANAL, 0.25)]
+        der = [mdt.maximo(*(C - d * m), 0.0) for d in np.arange(0.5, ANCHO_CANAL, 0.25)]
         izq, der = [v for v in izq if v is not None], [v for v in der if v is not None]
         if izq and der:
             r["corona_izquierda"], r["corona_derecha"] = round(max(izq), 3), round(max(der), 3)
             r["cota_coronacion_canal"] = min(r["corona_izquierda"], r["corona_derecha"])
             alertas.append("fondo del canal: el dron no ve bajo el agua; confirmar con nivel o estación total")
-        lineas_control.append([tuple(P + ANCHO_CANAL * m), tuple(P - ANCHO_CANAL * m)])
+        lineas_control.append([tuple(C + ANCHO_CANAL * m), tuple(C - ANCHO_CANAL * m)])
     if familia == "C":
         r["S_canal_mdt"] = r.pop("S_cauce", None)    # en C la pendiente es la de la junta
         alertas.append("S del canal: usar la de la Junta de Usuarios (la del MDT es solo referencia)")
@@ -290,13 +331,18 @@ def medir_obra(obra, eje, mdt, cauces, canales, perfil):
 def leer_perfil(ruta):
     if not ruta:
         return []
-    with open(ruta, encoding="utf-8-sig") as f:
-        muestra = f.read(2048)
+    with open(ruta, encoding="utf-8-sig", newline="") as f:
+        muestra = f.read(4096)
         f.seek(0)
         sep = ";" if muestra.count(";") > muestra.count(",") else ","
-        filas = list(csv.DictReader(f, delimiter=sep))
-    cols = {c.lower().strip(): c for c in filas[0]}
-    c_prog = next(c for k, c in cols.items() if "prog" in k)
+        lector = csv.DictReader(f, delimiter=sep)
+        filas = list(lector)
+        campos = lector.fieldnames or []
+    cols = {c.lower().strip(): c for c in campos if c}
+    c_prog = next((c for k, c in cols.items() if "prog" in k), None)
+    if c_prog is None or not filas:
+        raise Exception("El perfil %s necesita una columna de progresiva y al menos una fila "
+                        "(columnas: progresiva, cota_rasante, cota_subrasante)." % ruta)
     c_ras = next((c for k, c in cols.items() if "rasante" in k and "sub" not in k), None)
     c_sub = next((c for k, c in cols.items() if "subrasante" in k), None)
     perfil = []
@@ -304,23 +350,41 @@ def leer_perfil(ruta):
         def num(c):
             v = (f.get(c) or "").strip().replace(",", ".") if c else ""
             return float(v) if v else None
-        perfil.append((leer_progresiva(f[c_prog]), {"cota_rasante": num(c_ras), "cota_subrasante": num(c_sub)}))
+        if not (f.get(c_prog) or "").strip():
+            continue
+        perfil.append((leer_progresiva(f[c_prog], PERFIL_PROGRESIVA_EN),
+                       {"cota_rasante": num(c_ras), "cota_subrasante": num(c_sub)}))
     return sorted(perfil, key=lambda x: x[0])
 
 
 def procesar(puntos_csv, eje, mdt, cauces, canales, perfil, carpeta):
-    with open(puntos_csv, encoding="utf-8-sig") as f:
-        lector = csv.DictReader(f)
-        campos = lector.fieldnames
+    with open(puntos_csv, encoding="utf-8-sig", newline="") as f:
+        muestra = f.read(4096)
+        f.seek(0)
+        sep = ";" if muestra.count(";") > muestra.count(",") else ","
+        lector = csv.DictReader(f, delimiter=sep)
+        campos = [c for c in (lector.fieldnames or []) if c is not None]
         obras = list(lector)
+    faltan = [c for c in ("id", "progresiva_km", "familia") if c not in campos]
+    if faltan:
+        raise Exception("A %s le faltan las columnas %s (es el CSV de la app Proyecto_alcantarillas)."
+                        % (puntos_csv, ", ".join(faltan)))
+    sin_columna = [c for c in COLUMNAS_TOPO if c not in campos]
+    if sin_columna:
+        print("AVISO: el CSV no tiene las columnas %s; la app no admite columnas nuevas, así que "
+              "esos valores quedan solo en cotas_alcantarillas_dron.csv." % ", ".join(sin_columna))
     resultados, puntos, lineas = [], [], []
-    for obra in obras:
-        r, pts, lin = medir_obra(obra, eje, mdt, cauces, canales, perfil)
+    for i, obra in enumerate(obras):
+        obra.pop(None, None)                          # celdas sobrantes de una fila más larga
+        try:
+            r, pts, lin = medir_obra(obra, eje, mdt, cauces, canales, perfil)
+        except Exception as e:
+            raise Exception("Obra '%s' (fila %d de %s): %s" % (obra.get("id"), i + 2, os.path.basename(puntos_csv), e))
         resultados.append(r)
         puntos.append((obra["id"], pts))
         lineas.append((obra["id"], lin))
         for col in COLUMNAS_TOPO:
-            if r.get(col) is not None:
+            if col in campos and r.get(col) is not None:
                 obra[col] = r[col]
 
     os.makedirs(carpeta, exist_ok=True)
@@ -333,8 +397,8 @@ def procesar(puntos_csv, eje, mdt, cauces, canales, perfil, carpeta):
         w.writerow(det)
         for r in resultados:
             w.writerow([" | ".join(r[c]) if c == "alertas" else ("" if r.get(c) is None else r[c]) for c in det])
-    with open(os.path.join(carpeta, "puntos_via_evitamiento_con_cotas.csv"), "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=campos)
+    with open(os.path.join(carpeta, "puntos_via_evitamiento_con_cotas.csv"), "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=campos, delimiter=sep, extrasaction="ignore")
         w.writeheader()
         w.writerows(obras)
     return resultados, puntos, lineas
@@ -349,22 +413,47 @@ def _en_qgis():
         return False
 
 
+def _atributo(objeto, *rutas):
+    """Primer atributo que exista, p. ej. 'GeometryType.Line' o 'LineGeometry' (QGIS 3.x y 4)."""
+    for r in rutas:
+        o = objeto
+        try:
+            for parte in r.split("."):
+                o = getattr(o, parte)
+            return o
+        except AttributeError:
+            continue
+    raise AttributeError("ninguno de %s existe en %s" % (rutas, objeto))
+
+
 def main():
     from osgeo import gdal
-    from qgis.core import (QgsFeature, QgsField, QgsGeometry, QgsPointXY, QgsProject,
+    from qgis.core import (Qgis, QgsFeature, QgsField, QgsGeometry, QgsPointXY, QgsProject,
                            QgsRasterLayer, QgsVectorFileWriter, QgsVectorLayer, QgsWkbTypes)
-    from qgis.PyQt.QtCore import QVariant
     proyecto = QgsProject.instance()
+    try:
+        TIPO_LINEA = Qgis.GeometryType.Line                   # QGIS >= 3.30
+    except AttributeError:
+        TIPO_LINEA = QgsWkbTypes.LineGeometry
+    try:
+        from qgis.PyQt.QtCore import QMetaType
+        TEXTO = QMetaType.Type.QString
+        QgsField("prueba", TEXTO)                             # QGIS >= 3.38
+    except Exception:
+        from qgis.PyQt.QtCore import QVariant
+        TEXTO = QVariant.String
 
     def capa(textos, tipo, geometria=None, obligatoria=True):
         for texto in textos:
             for c in proyecto.mapLayers().values():
                 if texto.lower() not in c.source().lower() and texto.lower() not in c.name().lower():
                     continue
-                if geometria == "raster" and (not isinstance(c, QgsRasterLayer) or c.bandCount() != 1):
-                    continue                          # descarta la ortofoto (3 bandas)
-                if geometria in (0, 1):
-                    if not isinstance(c, QgsVectorLayer) or c.geometryType() != geometria or c.featureCount() == 0:
+                if geometria == "raster":
+                    if (not isinstance(c, QgsRasterLayer) or c.bandCount() != 1
+                            or c.providerType() != "gdal"):
+                        continue                      # descarta la ortofoto (3 bandas) y teselas web
+                if geometria == "linea":
+                    if not isinstance(c, QgsVectorLayer) or c.geometryType() != TIPO_LINEA or c.featureCount() == 0:
                         continue
                 return c
         if obligatoria:
@@ -375,6 +464,10 @@ def main():
         out = []
         for f in c.getFeatures():
             g = f.geometry()
+            if g.isNull() or g.isEmpty():
+                continue
+            if QgsWkbTypes.isCurvedType(g.wkbType()):
+                g = QgsGeometry(g.constGet().segmentize())
             partes = g.asMultiPolyline() if g.isMultipart() else [g.asPolyline()]
             nombre = next((str(f[k]) for k in ("nombre", "name", "id", "fid") if k in f.fields().names()), str(f.id()))
             for parte in partes:
@@ -383,12 +476,13 @@ def main():
         return out
 
     mdt_capa = capa(MDT_FUENTE, "MDT del dron", "raster")
-    eje_capa = capa(EJE_FUENTE, "eje (líneas)", 1)
-    if mdt_capa.crs().authid() != eje_capa.crs().authid():
-        raise Exception("El MDT (%s) y el eje (%s) están en sistemas distintos. Reproyecta uno de los dos."
-                        % (mdt_capa.crs().authid(), eje_capa.crs().authid()))
-    cauces_capa = capa(CAUCES_FUENTE, "cauces", 1, obligatoria=False) if CAUCES_FUENTE else None
-    canales_capa = capa(CANALES_FUENTE, "canales", 1, obligatoria=False) if CANALES_FUENTE else None
+    eje_capa = capa(EJE_FUENTE, "eje (líneas)", "linea")
+    cauces_capa = capa(CAUCES_FUENTE, "cauces", "linea", obligatoria=False) if CAUCES_FUENTE else None
+    canales_capa = capa(CANALES_FUENTE, "canales", "linea", obligatoria=False) if CANALES_FUENTE else None
+    for nombre, c in (("MDT", mdt_capa), ("cauces", cauces_capa), ("canales", canales_capa)):
+        if c is not None and c.crs().authid() != eje_capa.crs().authid():
+            raise Exception("La capa de %s (%s) y el eje (%s) están en sistemas distintos. Reproyecta una de las dos."
+                            % (nombre, c.crs().authid(), eje_capa.crs().authid()))
 
     tramos = polilineas(eje_capa)
     if len(tramos) != 1:
@@ -400,9 +494,15 @@ def main():
     print("Eje: %.2f m" % eje.largo)
 
     ds = gdal.Open(mdt_capa.source().split("|")[0])
+    if ds is None:
+        raise Exception("GDAL no pudo abrir el MDT: %s" % mdt_capa.source())
     banda = ds.GetRasterBand(1)
     gt = ds.GetGeoTransform()
+    if gt[2] != 0 or gt[4] != 0 or gt[5] >= 0:
+        raise Exception("El MDT está rotado o con las filas de sur a norte; vuelve a exportarlo "
+                        "(gdalwarp) con el norte arriba y sin rotación.")
     nd = banda.GetNoDataValue()
+    escala, desfase = banda.GetScale() or 1.0, banda.GetOffset() or 0.0
     print("MDT: %s (celda %.3f m)" % (mdt_capa.source(), gt[1]))
 
     def leer(xmin, ymin, xmax, ymax):
@@ -413,6 +513,11 @@ def main():
         if c1 <= c0 or f1 <= f0:
             return (np.full((1, 1), np.nan), xmin, ymax, gt[1], -gt[5], nd)
         arr = banda.ReadAsArray(c0, f0, c1 - c0, f1 - f0)
+        if escala != 1.0 or desfase != 0.0:           # MDT entero con factor de escala
+            arr = arr.astype(float)
+            if nd is not None:
+                arr[arr == nd] = np.nan
+            arr = arr * escala + desfase
         return (arr, gt[0] + c0 * gt[1], gt[3] + f0 * gt[5], gt[1], -gt[5], nd)
 
     cauces = polilineas(cauces_capa) if cauces_capa else []
@@ -429,7 +534,7 @@ def main():
     cp = QgsVectorLayer("Point?crs=%s" % crs, "control_puntos", "memory")
     cl = QgsVectorLayer("LineString?crs=%s" % crs, "control_lineas", "memory")
     for c in (cp, cl):
-        c.dataProvider().addAttributes([QgsField("id", QVariant.String), QgsField("tipo", QVariant.String)])
+        c.dataProvider().addAttributes([QgsField("id", TEXTO), QgsField("tipo", TEXTO)])
         c.updateFields()
     for oid, (p_eje, p_sal) in puntos:
         for tipo, p in (("eje", p_eje), ("entrega", p_sal)):
@@ -444,13 +549,25 @@ def main():
             f.setAttributes([oid, "cauce" if i == 0 else "seccion canal"])
             cl.dataProvider().addFeature(f)
     ruta = os.path.join(CARPETA, "control_cotas_dron.gpkg")
+    ruta_norm = os.path.normcase(os.path.abspath(ruta))
+    viejas = [c.id() for c in proyecto.mapLayers().values()
+              if os.path.normcase(os.path.abspath(c.source().split("|")[0])) == ruta_norm]
+    if viejas:
+        proyecto.removeMapLayers(viejas)              # suelta el gpkg de la corrida anterior
     for i, c in enumerate((cp, cl)):
         op = QgsVectorFileWriter.SaveVectorOptions()
         op.driverName = "GPKG"
         op.layerName = c.name()
-        op.actionOnExistingFile = (QgsVectorFileWriter.CreateOrOverwriteFile if i == 0
-                                   else QgsVectorFileWriter.CreateOrOverwriteLayer)
-        QgsVectorFileWriter.writeAsVectorFormatV3(c, ruta, proyecto.transformContext(), op)
+        op.actionOnExistingFile = _atributo(
+            QgsVectorFileWriter,
+            "CreateOrOverwriteFile" if i == 0 else "CreateOrOverwriteLayer",
+            "ActionOnExistingFile.CreateOrOverwriteFile" if i == 0 else "ActionOnExistingFile.CreateOrOverwriteLayer")
+        if hasattr(QgsVectorFileWriter, "writeAsVectorFormatV3"):
+            res = QgsVectorFileWriter.writeAsVectorFormatV3(c, ruta, proyecto.transformContext(), op)
+        else:
+            res = QgsVectorFileWriter.writeAsVectorFormatV2(c, ruta, proyecto.transformContext(), op)
+        if res[0] != _atributo(QgsVectorFileWriter, "NoError", "WriterError.NoError"):
+            raise Exception("No pude escribir %s (%s). ¿Está abierto en otro programa?" % (ruta, res[1]))
         proyecto.addMapLayer(QgsVectorLayer(ruta + "|layername=" + c.name(), c.name(), "ogr"))
 
     print("\n%-8s %-6s %9s %9s %8s %6s  alertas" % ("obra", "prog", "terreno", "receptor", "S %", "esv°"))
@@ -459,7 +576,9 @@ def main():
         print("%-8s %-6s %9s %9s %8s %6s  %s" % (
             r["id"], r["progresiva"], r.get("cota_terreno"), r.get("cota_fondo_receptor"),
             "" if S is None else "%.2f" % (100 * S), r.get("esviaje_grados"), " | ".join(r["alertas"])))
-    print("\nListo. Resultados en", CARPETA)
+    con_alerta = sum(1 for r in resultados if r["alertas"])
+    print("\n%d obras medidas, %d con alertas." % (len(resultados), con_alerta))
+    print("Listo. Resultados en", CARPETA)
 
 
 if _en_qgis():
