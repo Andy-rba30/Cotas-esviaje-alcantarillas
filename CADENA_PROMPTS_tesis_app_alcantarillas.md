@@ -12,12 +12,7 @@
 
 Con eso se cubre: hidrología completa (MTC cap. III: Tabla 01–02 TR, §3.8.1 IDF, §3.9 Tabla 05 Tc, §3.12.2 Tabla 08 racional), hidráulica (HDS-5 Tablas A.1 y C.2, §3.3, §3.5, §5.4.3; MTC 4.1.1.3), geometría (DG-2018, EG-2013 508), estructural del conducto (AASHTO LRFD 3.6.1.2.6, 12.6, 12.7, 12.10, 12.11, 12.12; M 170M; A796; M 294), cabezales y aleros (AASHTO 3.11.5.3, 3.11.6.4, 11.6; Manual de Puentes 2.4; E.050 Art. 21 y 39.13; E.060 cap. 7, 11, 14, 22; E.030 Anexo 1), espaciamiento (MTC 4.1.2.1) y protección básica (MTC ec. 49 Laushey y Lámina 05).
 
-**Faltan dos fuentes, ambas gratuitas, que conviene añadir a `Normas` antes de T-8 y T-4:**
-
-| Falta | Para qué | Si no se añade |
-|---|---|---|
-| **HEC-14** "Hydraulic Design of Energy Dissipators for Culverts and Channels", FHWA-NHI-06-086 (3.ª ed., 2006) | Longitud y espesor del apron de enrocado a la salida, disipadores, filtro | T-8 se queda en Laushey (MTC) + Lámina 05, declarado [C] con HDS-5 §3.1.6 y sin apron calculado |
-| **WSDOT Hydraulics Manual M 23-03** (Tabla 8-4) | Velocidad máxima TMC y HDPE (hoy 4,572 m/s citado sin PDF) | T-4 lo deja como [A] con ventana de sensibilidad (3,0–4,6 m/s) y nota de fuente no verificada |
+**Las dos fuentes que faltaban ya están en `Normas`** (commit `eebfcca`): `hec14.pdf` (HEC-14, *Hydraulic Design of Energy Dissipators for Culverts and Channels*, FHWA-NHI-06-086, 287 pp.) y `HydraulicsManual.pdf` (WSDOT Hydraulics Manual M 23-03, 325 pp.). Con ellas T-8 calcula el apron y los disipadores con HEC-14 y T-4 verifica la Tabla 8-4 de velocidades de TMC y HDPE. Ambas son [C] (fuente técnica reconocida, no norma peruana) y deben darse de alta en `src/normativa/fuentes.py` con su edición y página (T-0 punto 5).
 
 Lo que **no** es norma y la cadena **no** debe inventar, porque son entradas del proyecto: series SENAMHI, caudal y sección de drenes/canales (ANA/Junta), parámetros del EMS (φ, c, γ, q_adm, NF, SPT, Vs30), ensayos químicos de suelo y agua, IMDA, cotas y esviajes (este script de QGIS), ancho de derecho de vía. La cadena las deja como columnas del CSV, datos externos o `[S]` declarables, con validación de forma, nunca con valores por defecto.
 
@@ -89,7 +84,7 @@ Ejecuta únicamente T-0 de CADENA_PROMPTS_tesis_app_alcantarillas.md y aplica su
 
 4. Contrato de entrada que NO se toca: escribe en docs/contrato_entradas.md (nuevo) la lista de entradas de diseño (CSV, datos externos, [S]) con su origen (estudio hidrológico, ANA/Junta, EMS, topografía/QGIS, trazo), dejando claro que la cadena T no las rellena. Incluye la convención de esviaje (0° = perpendicular) y la fórmula de conversión desde expedientes que usan 90° = perpendicular.
 
-5. Enlace a Normas. Decide y documenta en CLAUDE.md cómo se obtienen los PDF: (a) el repo Normas clonado y enlazado como normas/ (symlink o variable NORMAS_DIR leída por src/normativa/fuentes.py), o (b) git submodule. Implementa la opción elegida de modo que src/normativa/fuentes.py y verificar_sesion.py los encuentren, y registra la ausencia de HEC-14 y WSDOT M 23-03 en docs/manifiesto_registro_normativo.md con el nombre exacto del documento que falta. No borres todavía los PDF de normas/ del repo (eso es T-12).
+5. Enlace a Normas. Decide y documenta en CLAUDE.md cómo se obtienen los PDF: (a) el repo Normas clonado y enlazado como normas/ (symlink o variable NORMAS_DIR leída por src/normativa/fuentes.py), o (b) git submodule. Implementa la opción elegida de modo que src/normativa/fuentes.py y verificar_sesion.py los encuentren, y da de alta en src/normativa/fuentes.py y en docs/manifiesto_registro_normativo.md las dos fuentes nuevas de Normas: hec14.pdf (HEC-14, FHWA-NHI-06-086) y HydraulicsManual.pdf (WSDOT M 23-03), con edición y paginación verificadas, para que T-4 y T-8 puedan citarlas. No borres todavía los PDF de normas/ del repo (eso es T-12).
 
 6. Deja en docs/planes_mejora/09_CADENA_PROMPTS_TESIS.md una copia de este documento.
 
@@ -165,7 +160,7 @@ Ejecuta únicamente T-4 de CADENA_PROMPTS_tesis_app_alcantarillas.md y aplica su
 
 2. D_max_catalogo: sustituye los topes 2.70 / 2.10 / 1.50 [A] sin respaldo por los que dan las normas de producto (M 170M diámetros nominales; M 36 diámetros de fabricación; M 294 300–1500 mm), citados, y deja la disponibilidad local como [A] opcional que solo puede bajar el tope.
 
-3. Velocidad máxima TMC y HDPE: si WSDOT M 23-03 ya está en Normas, verifica la Tabla 8-4 y cita página; si no, reclasifica v_max_tmc y v_max_hdpe de [C] a [A] con ventana (3.0–4.6 m/s), justificación que cite la abrasión del manual MTC 4.1.1.3.7 e) y la práctica, y anota en el manifiesto que la fuente no está en el repo.
+3. Velocidad máxima TMC y HDPE: la fuente ya está en Normas (HydraulicsManual.pdf, WSDOT M 23-03.12, abril 2026). OJO: su Tabla 8-4 (pág. 8-27, §8-6 Abrasión) NO es una tabla de velocidades máximas sino de NIVELES DE ABRASIÓN: no abrasivo < 3 ft/s, poco abrasivo < 6 ft/s, moderadamente abrasivo 6–15 ft/s, severamente abrasivo > 15 ft/s; para el nivel severo el manual prohíbe el termoplástico (§8-3.3: "shall not be used for severely abrasive conditions") y para el metal exige más calibre o protección, no lo prohíbe. Por tanto: v_max_hdpe = 4.572 m/s puede quedar [C] citando §8-3.3 y Tabla 8-4 con página; v_max_tmc pasa a [A] con ventana (3.0–4.6 m/s) y justificación (abrasión, manual MTC 4.1.1.3.7 e); Tabla 8-4 como referencia de nivel), o se sustituye por la regla de la propia tabla (nivel de abrasión del sitio como entrada [S] y aumento de calibre como consecuencia, enlazado con T-5). Elige una de las dos y documenta; corrige la ficha que hoy etiqueta ambos como [C].
 
 4. Matriz de durabilidad (hoja de ruta Sec. 3.4) como filtro real de M2.materiales_candidatos: entradas [S] por sitio o por punto, todas opcionales y sin valor por defecto: sulfatos_ppm, cloruros_ppm, pH, resistividad_ohm_cm, abrasion (categoría). Reglas: sulfatos → tipo de cemento y concreto admisible (E.060 Tabla 4.4); cloruros → recubrimiento/concreto; pH y resistividad → TMC inadmisible o con recubrimiento (cita AASHTO/ASTM A760 o EG-2013 donde lo diga; si la fuente peruana no da umbral, [C] con cita FHWA/AASHTO y ventana); "suelo de fundación deficiente → marco" (hoja Sec. 3.1) como aviso, no filtro. Sin datos, el filtro no actúa y la memoria imprime "durabilidad: sin ensayos, matriz no aplicada".
 
@@ -277,13 +272,13 @@ Ritual de cierre.
 ### T-8 · Protección de entrada y salida (después de T-2; paralelo con T-7)
 
 ```text
-Ejecuta únicamente T-8 de CADENA_PROMPTS_tesis_app_alcantarillas.md y aplica sus reglas comunes. Cierra INF-3.3 "protección" e INF-5.1.11 (M6 sin protección de entrada). Fuentes: manual MTC 4.1.1.3.7 c) ec. (49) Laushey y Láminas 04–05; HDS-5 §3.1.6 (velocidad de salida) y §5.x (scour, referencia a HEC-14); HEC-14 SOLO si ya está en Normas (cap. 10 riprap basin / apron, cap. 4 y 5 disipadores): si no está, no inventes sus fórmulas: deja el apron como [A] con ventana y nota "HEC-14 ausente".
+Ejecuta únicamente T-8 de CADENA_PROMPTS_tesis_app_alcantarillas.md y aplica sus reglas comunes. Cierra INF-3.3 "protección" e INF-5.1.11 (M6 sin protección de entrada). Fuentes: manual MTC 4.1.1.3.7 c) ec. (49) Laushey y Láminas 04–05; HDS-5 §3.1.6 (velocidad de salida) y §5.x (scour, referencia a HEC-14); HEC-14 (hec14.pdf, ya en Normas): cap. 10 (riprap aprons y riprap basins), cap. 4–5 (velocidad de salida y disipadores internos), cap. 3 (socavación a la salida); cada fórmula transcrita con página verificada.
 
-1. Salida: conserva Laushey (d50) y añade: Froude a la salida; longitud del apron (si HEC-14: su fórmula; si no, [A] 3·D–5·D con ventana y justificación de la Lámina 05); espesor 1.5–2.0·d50 [C/A]; filtro (geotextil o granular) como requisito declarado [N] de EG-2013 si lo trae, o [A]; velocidad admisible del cauce receptor (manual MTC Tabla 11 por tipo de terreno, entrada [S] tipo_terreno_receptor) con aviso cuando V_salida la supera y cálculo del d50 solo entonces.
+1. Salida: conserva Laushey (d50) y añade: Froude a la salida; longitud y d50 del apron por HEC-14 cap. 10 (Froude a la salida, TW/D), con la Lámina 05 del MTC como contraste; espesor 1.5–2.0·d50 [C/A]; filtro (geotextil o granular) como requisito declarado [N] de EG-2013 si lo trae, o [A]; velocidad admisible del cauce receptor (manual MTC Tabla 11 por tipo de terreno, entrada [S] tipo_terreno_receptor) con aviso cuando V_salida la supera y cálculo del d50 solo entonces.
 
 2. Entrada: protección de taludes del terraplén y zampeado/caja según tipo de embocadura (T-7a); emboquillado de piedra como [A] de catálogo con cita a las Láminas.
 
-3. Socavación local a la salida como estimación para la profundidad de desplante del cabezal (T-7a punto 2): si HEC-14 está, su método; si no, [A] con ventana y dato externo "profundidad de socavación estimada".
+3. Socavación local a la salida (HEC-14 cap. 3, método de la hoya de socavación) como estimación para la profundidad de desplante del cabezal (T-7a punto 2); el dato externo "profundidad de socavación estimada" gana si viene.
 
 4. M6 pasa a llamarse de verdad "protección de entrada y salida"; todas las magnitudes con PasoDeMemoria y fórmula sustituida.
 
@@ -353,7 +348,7 @@ Ejecuta únicamente T-12 de CADENA_PROMPTS_tesis_app_alcantarillas.md y aplica s
 
 4. LICENSE (elige con el autor; por defecto MIT sobre el código, con nota de que los PDF de normas no se licencian), pyproject.toml con dependencias fijadas, README de usuario (instalación, entradas, corrida, salidas) separado del README de proceso.
 
-5. docs/manifiesto_registro_normativo.md: estado final de las 18 fuentes presentes y de las ausentes (HEC-14, WSDOT) con la decisión tomada.
+5. docs/manifiesto_registro_normativo.md: estado final de las 20 fuentes presentes en Normas (incluidas HEC-14 y WSDOT) y de las que sigan citadas sin PDF.
 
 Ritual de cierre.
 ```
